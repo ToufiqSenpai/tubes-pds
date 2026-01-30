@@ -1,0 +1,14 @@
+streamlit
+streamlit-shadcn-ui
+streamlit-chat
+pandas
+httpx
+nest-asyncio
+huggingface-hub
+sentence-transformers
+qdrant-client
+langchain
+langchain-google-genai
+langchain-qdrant
+google-generativeai
+python-dotenv

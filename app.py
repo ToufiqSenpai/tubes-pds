@@ -1,5 +1,8 @@
 import streamlit as st
 import streamlit_shadcn_ui as ui
+from dotenv import load_dotenv
+
+load_dotenv()
 
 with st.container(border=True):
     st.title("Book Store", text_alignment="center")

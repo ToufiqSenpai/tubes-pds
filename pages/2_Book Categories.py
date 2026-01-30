@@ -1,5 +1,5 @@
 import streamlit as st
-from data import get_book_categories_cached
+from data.dataset import get_book_categories
 
 st.title("Book Categories")
-st.dataframe(get_book_categories_cached())
+st.dataframe(get_book_categories())
