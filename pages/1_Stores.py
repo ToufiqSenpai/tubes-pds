@@ -1,20 +1,16 @@
 import streamlit as st
 import pandas as pd
-import sys
 import os
 import urllib.parse
 import folium
 from streamlit_folium import st_folium
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
 from data.dataset import get_store_locations
 
 st.set_page_config(layout="wide")
 st.title("Store Locator")
 
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-IMAGE_PATH = os.path.join(BASE_DIR, "toko_buku.png")
+IMAGE_PATH = os.path.join(BASE_DIR, "toko.png")
 
 df = get_store_locations()
 
@@ -95,7 +91,7 @@ for _, row in df.iterrows():
         except:
             pass
 
-st_folium(m, use_container_width=True, height=300)
+st_folium(m, width='stretch', height=300)
 
 cols = st.columns(2)
 
