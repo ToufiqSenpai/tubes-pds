@@ -1,14 +1,37 @@
+# Core Web Framework
 streamlit
-streamlit-shadcn-ui
-streamlit-chat
+
+# Data Processing & Analysis
 pandas
-httpx
+numpy
+
+# Async & Networking
+asyncio
 nest-asyncio
+httpx
+
+# Hugging Face Integration
 huggingface-hub
-sentence-transformers
+
+# Vector Database & RAG
 qdrant-client
+sentence-transformers
+
+# LLM & AI Agents
 langchain
-langchain-google-genai
-langchain-qdrant
-google-generativeai
+langchain-openai
+langgraph
+
+# HTML Parsing
+beautifulsoup4
+
+# Environment Variables
 python-dotenv
+
+# Visualization
+matplotlib
+folium
+streamlit-folium
+
+# Utilities
+pydantic
