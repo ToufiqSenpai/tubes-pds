@@ -4,7 +4,28 @@ import os
 import urllib.parse
 import folium
 from streamlit_folium import st_folium
+from folium.plugins import MarkerCluster
 from data.dataset import get_store_locations
+
+def clean_dataset(df):
+    df["name"] = df["name"].astype(str)
+    df["address"] = df["address"].astype(str)
+
+    df["name"] = df["name"].str.replace(r"\*+", "", regex=True)
+
+    df["name"] = df["name"].str.strip()
+    df["address"] = df["address"].str.strip()
+
+    df["name"] = df["name"].str.title()
+
+    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
+    df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
+
+    df = df.dropna(subset=["latitude", "longitude"])
+    df = df.drop_duplicates(subset=["name", "address"])
+
+    return df
+
 
 st.set_page_config(layout="wide")
 st.title("Store Locator")
@@ -12,90 +33,107 @@ st.title("Store Locator")
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 IMAGE_PATH = os.path.join(BASE_DIR, "toko.png")
 
-df = get_store_locations()
+df = clean_dataset(get_store_locations())
 
-st.markdown("""
-<style>
-div[data-testid="stTextInput"] label {
-        display: none;
-    }
-    
-div[data-testid="stTextInput"] {
-    position: relative;
-}
+search = st.text_input("Cari Toko atau Lokasi",key="search_box")
+query = st.session_state.search_box
 
-div[data-testid="stTextInput"]::before {
-    content: "";
-    position: absolute;
-    left: 14px;
-    top: 50%;
-    width: 16px;
-    height: 16px;
-    transform: translateY(-60%);
-    background: url("data:image/svg+xml;utf8,\
-<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>\
-<circle cx='11' cy='11' r='8'/>\
-<line x1='21' y1='21' x2='16.65' y2='16.65'/>\
-</svg>") no-repeat center;
+if query:
+    df_name = df[df["name"].str.contains(query, case=False, na=False)]
 
-}
-div[data-testid="stTextInput"] input {
-    padding-left: 40px;
-    border-radius: 24px;
-}
-
-.store-card > div[data-testid="stContainer"] {
-    height: 260px;
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-search = st.text_input(
-    label="",
-    placeholder="Cari Toko atau Lokasi"
-)
-
-if search:
-    mask = (
-        df["name"].str.contains(search, case=False, na=False) |
-        df["address"].str.contains(search, case=False, na=False)
-    )
-    df = df[mask]
-
-st.write(f"Menampilkan {len(df)} toko")
+    if len(df_name) > 0:
+        df = df_name
+    else:
+        df = df[df["address"].str.contains(query, case=False, na=False)]
 
 st.subheader("Store Distribution Map")
 
-m = folium.Map(
-    location=[-2.5, 118],
-    zoom_start=5,
-    tiles="OpenStreetMap"
-)
+with st.expander("📌 Petunjuk Penggunaan"):
+    st.write("""
+• Cari toko melalui kolom pencarian  
+• Ganti tampilan peta melalui tab  
+• Klik titik lokasi untuk melihat alamat toko
+""")
 
-for _, row in df.iterrows():
-    if pd.notna(row["latitude"]) and pd.notna(row["longitude"]):
-        try:
-            lat = float(row["latitude"])
-            lon = float(row["longitude"])
+tab1, tab2, tab3 = st.tabs([
+    "Peta Biasa",
+    "Marker Cluster",
+    "Zoom Otomatis"
+])
 
-            folium.Marker(
-                location=[lat, lon],
-                popup=f"<b>{row['name']}</b><br>{row['address']}",
-                icon=folium.Icon(color="blue", icon="location-dot", prefix="fa")
-            ).add_to(m)
+with tab1:
+    m = folium.Map(location=[-2.5, 118], zoom_start=5)
 
-        except:
-            pass
+    for _, row in df.iterrows():
+        folium.Marker(
+            [row["latitude"], row["longitude"]],
+            popup=f"{row['name']} - {row['address']}"
+        ).add_to(m)
 
-st_folium(m, width='stretch', height=300)
+    with st.expander("ℹ\u2004Panduan Peta"):
+        st.write("""
+        • Setiap titik menunjukkan satu toko  
+        • Gunakan scroll mouse untuk zoom  
+        • Geser peta untuk melihat area lain
+        """)
 
-cols = st.columns(2)
+    st_folium(m, width="stretch", height=300, key="map_tab1")
 
-i = 0
+
+with tab2:
+    m = folium.Map(location=[-2.5, 118], zoom_start=5)
+    cluster = MarkerCluster().add_to(m)
+
+    for _, row in df.iterrows():
+        folium.Marker(
+            [row["latitude"], row["longitude"]],
+            popup=f"{row['name']} - {row['address']}"
+        ).add_to(cluster)
+
+    with st.expander("ℹ\u2004Panduan Clusterr"):
+        st.write("""
+        • Lingkaran angka menunjukkan kumpulan toko  
+        • Klik lingkaran untuk memperbesar area  
+        • Marker akan terpisah saat zoom mendekat
+        """)
+
+        
+    st_folium(m, width="stretch", height=300, key="map_tab2")
+
+with tab3:
+    m = folium.Map(zoom_start=5)
+
+    bounds = []
+
+    for _, row in df.iterrows():
+        lat, lon = row["latitude"], row["longitude"]
+
+        popup_text = f"""
+        <b>{row['name']}</b><br>
+        {row['address']}
+        """
+
+        folium.Marker(
+            [lat, lon],
+            popup=folium.Popup(popup_text, max_width=300)
+        ).add_to(m)
+
+        bounds.append([lat, lon])
+
+    if bounds:
+        m.fit_bounds(bounds)
+        
+    with st.expander("ℹ\u2004Panduan Zoom Otomatis"):
+        st.write("""
+        • Peta otomatis fokus ke hasil pencarian  
+        • Cocok untuk melihat persebaran toko di area tertentu
+        """)
+ 
+        
+    st_folium(m, width="stretch", height=300, key="map_tab3")
+
+st.subheader("Daftar Toko")
+
 for i in range(0, len(df), 2):
     cols = st.columns(2)
 
@@ -106,8 +144,6 @@ for i in range(0, len(df), 2):
         row = df.iloc[i + j]
 
         with cols[j]:
-            st.markdown('<div class="store-card">', unsafe_allow_html=True)
-
             with st.container(border=True):
                 c1, c2 = st.columns([1, 3])
 
@@ -115,7 +151,7 @@ for i in range(0, len(df), 2):
                     st.image(IMAGE_PATH, use_container_width=True)
 
                 with c2:
-                    st.markdown(f"**{row['name']}**")
+                    st.write(f"**{row['name']}**")
                     st.write(row["address"])
 
                     query = f"{row['name']} {row['address']}"
@@ -124,15 +160,4 @@ for i in range(0, len(df), 2):
                         + urllib.parse.quote(query)
                     )
 
-                    st.markdown(
-                        f"""
-                        <a href="{maps_url}" target="_blank">
-                            Jelajahi toko ini →
-                        </a>
-                        """,
-                        unsafe_allow_html=True
-                    )
-
-            st.markdown('</div>', unsafe_allow_html=True)
-
-    i += 1
+                    st.link_button("Jelajahi toko ini", maps_url)

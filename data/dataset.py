@@ -86,7 +86,7 @@ class Dataset(ABC):
         global hf_login
         
         if not hf_login:
-            token = os.environ.get("HF_TOKEN")
+            token = os.environ.get("OPENAI_API_KEY")
                 
             if token:
                 hf_hub.login(token=token)

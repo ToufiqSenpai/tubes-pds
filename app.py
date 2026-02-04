@@ -1,6 +1,9 @@
 import streamlit as st
 import math
+import dotenv
 from data.dataset import get_books
+
+dotenv.load_dotenv()
 
 # =============================
 # HELPER GOOGLE MAPS

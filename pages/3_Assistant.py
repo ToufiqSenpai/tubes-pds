@@ -1,114 +1,351 @@
+import httpx
+import json
+import os
 import streamlit as st
-from data.dataset import get_books
+from bs4 import BeautifulSoup
+from data.dataset import get_books, get_store_locations
 from data.rag import RAG
 from langchain.agents import create_agent
-from langchain.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
+from langchain.messages import SystemMessage, HumanMessage, AIMessage
 from langchain.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
 from langgraph.graph import MessagesState
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel, Field
-from streamlit_chat import message as chat_message
-from typing import Literal
 
 @st.cache_resource
-def get_rag_instance() -> tuple[RAG]:
-    rag_books = RAG("books", get_books(), ["title", "description", "author", "category_slug"])
-    
-    return rag_books
+def get_rag_instance() -> tuple[RAG, RAG]:
+    rag_books = RAG(
+        "books", get_books(), ["title", "description", "author", "category_slug"]
+    )
+    rag_stores = RAG(
+        "stores", get_store_locations(), ["name", "address"]
+    )
 
-rag_books = get_rag_instance()
+    return rag_books, rag_stores
+
+
+rag_books, rag_stores = get_rag_instance()
 
 class BookInput(BaseModel):
-    query: str = Field(default=None, description="The search query for books by title, author, or category.")
+    query: str = Field(
+        default=None,
+        description="The search query for books by title, author, or category.",
+    )
     limit: int = Field(default=5, description="The maximum number of books to return.")
 
-@tool("get_books", args_schema=BookInput, description="Get books from the book store dataset based on a search query.")
+
+@tool(
+    "get_books",
+    args_schema=BookInput,
+    description="Get books from the book store dataset based on a search query.",
+)
 def get_books_tool(query: str = None, limit: int = 5) -> str:
     global rag_books
-    
+
     results = rag_books.search(query, limit)
-    
+
     if results.empty:
         return "No books found for the given query."
+
+    # Format as compact text
+    output = []
+    for idx, book in results.iterrows():
+        output.append(
+            f"{idx+1}. {book['title']} - {book['author']}\n"
+            f"   Harga: Rp {book['final_price']:,} | Diskon: {book.get('discount', 0)}% | Kategori: {book['category_slug']}"
+        )
     
-    print(results)
+    return "\n".join(output)
+
+
+class BookDetailInput(BaseModel):
+    query: str = Field(
+        description="The search query for a specific book by title, ISBN, or slug. Should be as specific as possible.",
+    )
+
+
+@tool(
+    "get_book_tool",
+    args_schema=BookDetailInput,
+    description="Get detailed information about a specific book including full description, ISBN, format, language, warehouse, and more. Use this when user asks for details about a specific book or wants to know more information beyond just title and price.",
+)
+def get_book_tool(query: str) -> str:
+    global rag_books
+
+    # Search for the most relevant book
+    results = rag_books.search(query, limit=1)
+
+    if results.empty:
+        return "No book found for the given query."
+
+    book = results.iloc[0]
     
-    return results.to_json(orient="records")
+    # Fetch detailed description from website
+    description = book.get('description', 'Tidak ada deskripsi.')
+    
+    try:
+        book_slug = book.get('slug')
+        if book_slug:
+            url = f"https://www.gramedia.com/products/{book_slug}"
+            response = httpx.get(url, timeout=10.0)
+            
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                next_data_script = soup.find('script', {'id': '__NEXT_DATA__'})
+                
+                if next_data_script:
+                    next_data = json.loads(next_data_script.string)
+                    fetched_description = next_data.get('props', {}).get('pageProps', {}).get('productDetailMeta', {}).get('description')
+                    
+                    if fetched_description:
+                        description = fetched_description
+                        print(f"Fetched description from website for: {book['title']}")
+    except Exception as e:
+        print(f"Error fetching description: {e}")
+    
+    # Format as readable text
+    output = f"""
+    DETAIL BUKU:
+    Judul: {book['title']}
+    Penulis: {book['author']}
+    ISBN: {book.get('isbn', 'N/A')}
+    Format: {book.get('format', 'N/A')}
+    Bahasa: {book.get('lang', 'N/A')}
+    Image: {book.get('image', '')}
+
+    HARGA:
+    Harga Normal: Rp {book.get('slice_price', 0):,}
+    Harga Diskon: Rp {book['final_price']:,}
+    Diskon: {book.get('discount', 0)}%
+
+    KETERSEDIAAN:
+    Status: {'Habis' if book.get('is_oos') else 'Tersedia'}
+    Toko: {book.get('store_name', 'N/A')}
+    Warehouse: {book.get('warehouse_slug', 'N/A')}
+
+    DESKRIPSI:
+    {description}
+
+    INFO LAIN:
+    Kategori: {book['category_slug']}
+    SKU: {book.get('sku', 'N/A')}
+    Slug: {book.get('slug', 'N/A')}
+    """
+
+    return output
+
+
+class PriceFilterInput(BaseModel):
+    query: str = Field(
+        default=None,
+        description="The search query for books by title, author, or category. Leave empty to search all books.",
+    )
+    price_min: int = Field(
+        default=None,
+        description="Minimum price in IDR. Use this to find books cheaper than a certain price.",
+    )
+    price_max: int = Field(
+        default=None,
+        description="Maximum price in IDR. Use this to find books more expensive than a certain price.",
+    )
+    limit: int = Field(default=10, description="The maximum number of books to return.")
+
+
+@tool(
+    "filter_books_by_price",
+    args_schema=PriceFilterInput,
+    description="Filter books by price range and search query. Use this when user asks for books cheaper than X, more expensive than Y, or within a price range. Supports combining price filters with search queries.",
+)
+def filter_books_by_price_tool(
+    query: str = None, price_min: int = None, price_max: int = None, limit: int = 10
+) -> str:
+    global rag_books
+
+    # If query is provided, use RAG search first
+    if query:
+        results = rag_books.search(query, limit=100)  # Get more results for filtering
+    else:
+        # If no query, get all books from dataset
+        results = get_books()
+
+    if results.empty:
+        return "No books found for the given query."
+
+    # Apply price filters
+    if price_min is not None:
+        results = results[results["final_price"] >= price_min]
+    if price_max is not None:
+        results = results[results["final_price"] <= price_max]
+
+    if results.empty:
+        return "No books found matching the price criteria."
+
+    # Sort by price (ascending) and limit results
+    results = results.sort_values("final_price").head(limit)
+
+    # Format as compact text
+    output = []
+    for idx, book in results.iterrows():
+        output.append(
+            f"{len(output)+1}. {book['title']} - {book['author']}\n"
+            f"   Harga: Rp {book['final_price']:,} | Diskon: {book.get('discount', 0)}% | Kategori: {book['category_slug']}"
+        )
+    
+    return "\n".join(output)
+
+
+class StoreInput(BaseModel):
+    query: str = Field(
+        default=None,
+        description="The search query for stores by name or address.",
+    )
+    limit: int = Field(default=5, description="The maximum number of stores to return.")
+
+
+@tool(
+    "get_stores",
+    args_schema=StoreInput,
+    description="Search for Gramedia bookstores by store name or address. Returns store name, address, coordinates, type (online/offline), and opening hours. Use this when user asks about store locations, specific store names, or addresses.",
+)
+def get_stores_tool(query: str = None, limit: int = 5) -> str:
+    global rag_stores
+
+    results = rag_stores.search(query, limit)
+
+    if results.empty:
+        return "No stores found for the given query."
+
+    # Format as compact text
+    output = []
+    for idx, store in results.iterrows():
+        output.append(
+            f"{len(output)+1}. {store['name']}\n"
+            f"   Alamat: {store['address']}\n"
+            f"   Tipe: {store['type']} | Jam Buka: {store.get('open_schedule', 'N/A')}"
+        )
+    
+    return "\n".join(output)
+
 
 class State(MessagesState):
     pass
 
+
 @st.cache_resource
-def make_agent():
-    model = ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash", 
-        max_tokens=None, 
-        temperature=1.0, 
-        max_retries=2
+def get_model():
+    """Cache the LLM model to avoid recreating it."""
+    return ChatOpenAI(
+        model="openai/gpt-oss-120b:cheapest",
+        temperature=1.0,
+        max_retries=2,
+        api_key=os.environ.get("OPENAI_API_KEY"),
+        base_url="https://router.huggingface.co/v1"
     )
-    
-    return create_agent(
+
+
+st.title("📚 Gramedia Assistant")
+
+# Initialize checkpointer in session state
+if "checkpointer" not in st.session_state:
+    st.session_state.checkpointer = InMemorySaver()
+
+# Initialize agent in session state
+if "agent" not in st.session_state:
+    model = get_model()
+    system_prompt = """
+Kamu adalah asisten katalog buku Gramedia. Tugasmu membantu pengguna menemukan buku dan toko Gramedia dari dataset yang tersedia.
+
+**Untuk Pencarian Buku:**
+- Gunakan tool get_books untuk pencarian umum dan menampilkan beberapa pilihan buku
+- Gunakan tool get_book_tool ketika pengguna ingin detail lengkap dari buku tertentu (description, ISBN, format, dll)
+- Gunakan tool filter_books_by_price ketika pengguna menyebut harga (lebih murah dari X, lebih mahal dari Y, atau range harga)
+- Jika hasil kosong, jelaskan bahwa data tidak ditemukan dan tawarkan kata kunci lain
+- Jangan mengarang judul/penulis di luar dataset
+- Jika pengguna meminta rekomendasi, tampilkan beberapa opsi singkat (judul, penulis, kategori, harga bila tersedia)
+
+**Format Tampilan Buku:**
+- Ketika menampilkan informasi buku, SELALU sertakan gambar cover buku menggunakan markdown image syntax
+- Data dari tool sudah include field 'image' yang berisi URL gambar
+- Format gambar: ![Judul Buku](URL_gambar)
+- Letakkan gambar di atas atau di samping informasi buku untuk visual yang menarik
+
+**Untuk Pencarian Toko:**
+- Gunakan tool get_stores ketika pengguna bertanya tentang lokasi toko, nama toko tertentu, atau alamat toko
+- Tampilkan nama toko, alamat, tipe (online/offline), dan jam buka jika tersedia
+- Jika user bertanya toko terdekat tanpa menyebut nama/alamat, sarankan mereka menyebutkan area/kota yang dimaksud
+
+Jawaban harus ringkas, ramah, dan berbasis data. Format output dengan rapi menggunakan markdown.
+"""
+    st.session_state.agent = create_agent(
         model=model,
-        system_prompt=SystemMessage(content="You are a helpful assistant."),
-        checkpointer=InMemorySaver(),
-        tools=[get_books_tool],
+        system_prompt=SystemMessage(content=system_prompt),
+        checkpointer=st.session_state.checkpointer,
+        tools=[get_books_tool, get_book_tool, filter_books_by_price_tool, get_stores_tool],
     )
 
-st.title("Assistant")
-    
-agent = make_agent()
+# Thread config for maintaining conversation
+config = {"configurable": {"thread_id": "main_thread"}}
 
-if "messages" not in st.session_state:
-    st.session_state.messages = [SystemMessage(
-    """
-    Kamu adalah asisten katalog buku Gramedia. Tugasmu membantu pengguna menemukan buku dari dataset yang tersedia. Selalu gunakan tool pencarian buku ketika pengguna menanyakan rekomendasi, judul, penulis, kategori, atau permintaan terkait stok/produk. Jika hasil kosong, jelaskan bahwa data tidak ditemukan dan tawarkan kata kunci lain. Jawaban harus ringkas, ramah, dan berbasis data. Jangan mengarang judul/penulis di luar dataset. Jika pengguna meminta rekomendasi, tampilkan beberapa opsi singkat (judul, penulis, kategori, harga bila tersedia) dan minta preferensi lanjutan.
-    """
-    )]
+# Retrieve conversation history from checkpointer
+try:
+    state = st.session_state.agent.get_state(config)
+    messages = state.values.get("messages", [])
+except:
+    messages = []
 
-for idx, msg in enumerate(st.session_state.messages):
+# Display conversation history
+for idx, msg in enumerate(messages):
     if isinstance(msg, HumanMessage):
-        chat_message(msg.content, is_user=True, key=f"user-{idx}")
+        with st.chat_message("user"):
+            st.markdown(msg.content)
     elif isinstance(msg, AIMessage):
-        chat_message(msg.content, key=f"assistant-{idx}")
+        # Skip tool call messages, only show final responses
+        if msg.content and not msg.tool_calls:
+            with st.chat_message("assistant"):
+                st.markdown(msg.content)
     else:
         continue
 
-if prompt := st.chat_input("Ask me anything about the book store data!"):
+if prompt := st.chat_input("💬 Ask about books or stores..."):
     user_message = HumanMessage(content=prompt)
-    st.session_state.messages.append(user_message)
-    chat_message(prompt, is_user=True, key=f"user-{len(st.session_state.messages) - 1}")
-
-    message_placeholder = st.empty()
-    full_response = ""
     
-    try:
-        state = State(messages=user_message)
-        config = {"configurable": {"thread_id": "thread"}}
-        
-        # invoke the agent, streaming tokens from any llm calls directly
-        for chunk, metadata in agent.stream(state, config=config, stream_mode="messages"):
-            if isinstance(chunk, AIMessage):
-                # Handle different content formats
-                if isinstance(chunk.content, str):
-                    content_text = chunk.content
-                elif isinstance(chunk.content, list) and len(chunk.content) > 0:
-                    if isinstance(chunk.content[0], dict):
-                        content_text = chunk.content[0].get("text", "")
+    # Display user message immediately
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Display assistant response with streaming
+    with st.chat_message("assistant"):
+        message_placeholder = st.empty()
+        full_response = ""
+
+        try:
+            state = State(messages=user_message)
+
+            # invoke the agent, streaming tokens from any llm calls directly
+            for chunk, metadata in st.session_state.agent.stream(
+                state, config=config, stream_mode="messages"
+            ):
+                if isinstance(chunk, AIMessage):
+                    # Handle different content formats
+                    if isinstance(chunk.content, str):
+                        content_text = chunk.content
+                    elif isinstance(chunk.content, list) and len(chunk.content) > 0:
+                        if isinstance(chunk.content[0], dict):
+                            content_text = chunk.content[0].get("text", "")
+                        else:
+                            content_text = str(chunk.content[0])
                     else:
-                        content_text = str(chunk.content[0])
-                else:
-                    content_text = ""
-                
-                full_response = full_response + content_text
-                message_placeholder.markdown(full_response + "▌")
+                        content_text = ""
 
-        # Once streaming is complete, display the final message without the cursor
-        message_placeholder.empty()
-        chat_message(full_response, key=f"assistant-{len(st.session_state.messages)}")
+                    full_response = full_response + content_text
+                    message_placeholder.markdown(full_response + "▌")
 
-        # Add the complete message to session state
-        st.session_state.messages.append(AIMessage(content=full_response))
-    except Exception as e:
-        st.error(e)
-        print(e)
+            # Once streaming is complete, display the final message without the cursor
+            message_placeholder.markdown(full_response)
+            
+            # Rerun to update chat history from checkpointer
+            st.rerun()
+        except Exception as e:
+            st.error(e)
+            print(e)
