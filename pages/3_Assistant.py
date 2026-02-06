@@ -3,7 +3,7 @@ import json
 import os
 import streamlit as st
 from bs4 import BeautifulSoup
-from data.dataset import get_books, get_store_locations, get_available_books_on_stores
+from data.dataset import get_books, get_store_locations, get_available_books_on_stores, get_book_description
 from data.rag import RAG
 from langchain.agents import create_agent
 from langchain.messages import SystemMessage, HumanMessage, AIMessage
@@ -81,28 +81,15 @@ def get_book_tool(query: str) -> str:
 
     book = results.iloc[0]
     
-    # Fetch detailed description from website
+    # Fetch detailed description from website using the new function
     description = book.get('description', 'Tidak ada deskripsi.')
     
-    try:
-        book_slug = book.get('slug')
-        if book_slug:
-            url = f"https://www.gramedia.com/products/{book_slug}"
-            response = httpx.get(url, timeout=10.0)
-            
-            if response.status_code == 200:
-                soup = BeautifulSoup(response.text, 'html.parser')
-                next_data_script = soup.find('script', {'id': '__NEXT_DATA__'})
-                
-                if next_data_script:
-                    next_data = json.loads(next_data_script.string)
-                    fetched_description = next_data.get('props', {}).get('pageProps', {}).get('productDetailMeta', {}).get('description')
-                    
-                    if fetched_description:
-                        description = fetched_description
-                        print(f"Fetched description from website for: {book['title']}")
-    except Exception as e:
-        print(f"Error fetching description: {e}")
+    book_slug = book.get('slug')
+    if book_slug:
+        fetched_description = get_book_description(book_slug)
+        if fetched_description:
+            description = fetched_description
+            print(f"Fetched description from website for: {book['title']}")
     
     # Format as readable text
     output = f"""

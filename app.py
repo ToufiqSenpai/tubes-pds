@@ -4,7 +4,7 @@ import dotenv
 import folium
 import pandas as pd
 from streamlit_folium import st_folium
-from data.dataset import get_books, get_store_locations, get_available_books_on_stores, get_book_categories
+from data.dataset import get_books, get_store_locations, get_available_books_on_stores, get_book_categories, get_book_description
 
 dotenv.load_dotenv()
 
@@ -52,6 +52,16 @@ def detail_page(book):
         st.write(f"✍️ **Penulis:** {book['author']}")
         st.write(f"🏷️ **Kategori:** {book.get('category_title', book['category_slug'])}")
         st.write(f"💰 **Harga:** Rp {book['final_price']:,}")
+        
+        # Display description if available
+        book_slug = book.get('slug')
+        if book_slug:
+            description = get_book_description(book_slug)
+            if description:
+                st.markdown("---")
+                st.write("📖 **Deskripsi:**")
+                st.write(description)
+        
         st.markdown("---")
         st.write("🗺️ Toko yang Menjual Buku Ini")
         

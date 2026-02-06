@@ -6,8 +6,10 @@ import pandas as pd
 import os
 import streamlit as st
 import tempfile
+import json
 from abc import ABC, abstractmethod
 from typing import Optional
+from bs4 import BeautifulSoup
 
 # Allow nested event loops
 nest_asyncio.apply()
@@ -393,6 +395,35 @@ def get_available_books_on_stores(book_slug: str) -> pd.DataFrame:
         import traceback
         traceback.print_exc()
         return pd.DataFrame()
+
+def get_book_description(book_slug: str) -> Optional[str]:
+    """Fetch book description from Gramedia website by scraping the product page.
+    Note: Not cached with @st.cache_data because this is called from various contexts."""
+    try:
+        import json
+        from bs4 import BeautifulSoup
+        
+        with httpx.Client(timeout=timeout) as client:
+            url = f"https://www.gramedia.com/products/{book_slug}"
+            response = client.get(url)
+            
+            if response.status_code == 200:
+                soup = BeautifulSoup(response.text, 'html.parser')
+                next_data_script = soup.find('script', {'id': '__NEXT_DATA__'})
+                
+                if next_data_script:
+                    next_data = json.loads(next_data_script.string)
+                    description = next_data.get('props', {}).get('pageProps', {}).get('productDetailMeta', {}).get('description')
+                    
+                    if description:
+                        return description
+        
+        return None
+    except Exception as e:
+        print(f"Error fetching description for {book_slug}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 if __name__ == "__main__":
     # Example usage
