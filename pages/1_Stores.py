@@ -67,7 +67,8 @@ with tab1:
     for _, row in df.iterrows():
         folium.Marker(
             [row["latitude"], row["longitude"]],
-            popup=f"{row['name']} - {row['address']}"
+            popup=f"{row['name']} - {row['address']}",
+            icon=folium.Icon(color="blue", icon="info-sign")
         ).add_to(m)
 
     with st.expander("ℹ\u2004Panduan Peta"):
@@ -78,7 +79,6 @@ with tab1:
         """)
 
     st_folium(m, width="stretch", height=300, key="map_tab1")
-
 
 with tab2:
     m = folium.Map(location=[-2.5, 118], zoom_start=5)
