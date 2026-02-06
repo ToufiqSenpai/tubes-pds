@@ -346,3 +346,56 @@ def get_book_categories() -> pd.DataFrame:
 @st.cache_data
 def get_store_locations() -> pd.DataFrame:
     return asyncio.run(StoreLocationsDataset().get())
+
+def get_available_books_on_stores(book_slug: str) -> pd.DataFrame:
+    """Fetch available stores for a book using synchronous HTTP to avoid event loop conflicts.
+    Note: Not cached with @st.cache_data because this is called from LangChain's ThreadPoolExecutor."""
+    try:
+        with httpx.Client(timeout=timeout) as client:
+            response = client.get(
+                f"https://api-service.gramedia.com/api/v2/public/product-detail-warehouses/{book_slug}?page=1&size=10&variant_code=soft-cover"
+            )
+            data = response.json()
+            
+            if not data or "data" not in data or data["data"] is None:
+                return pd.DataFrame()
+            
+            if "warehouses" not in data["data"]:
+                return pd.DataFrame()
+            
+            total_pages = data.get("meta", {}).get("total_page", 1)
+            stores = list(data["data"]["warehouses"] or [])
+            
+            if total_pages > 1:
+                for page in range(2, total_pages + 1):
+                    resp = client.get(
+                        f"https://api-service.gramedia.com/api/v2/public/product-detail-warehouses/{book_slug}?page={page}&size=10&variant_code=soft-cover"
+                    )
+                    resp_data = resp.json()
+                    if resp_data and "data" in resp_data and resp_data["data"] and "warehouses" in resp_data["data"]:
+                        stores.extend(resp_data["data"]["warehouses"])
+                    
+            stores = [store for store in stores if not store.get("is_oos", True)]
+            
+            if not stores:
+                return pd.DataFrame()
+            
+            return pd.DataFrame([
+                {
+                    "name": store.get("name", "Unknown"),
+                    "city": store.get("city", "Unknown"),
+                    "is_only_available_offline": store.get("is_only_available_offline", False),
+                }
+                for store in stores
+            ])
+    except Exception as e:
+        print(f"Error fetching available stores for {book_slug}: {e}")
+        import traceback
+        traceback.print_exc()
+        return pd.DataFrame()
+
+if __name__ == "__main__":
+    # Example usage
+    stores = get_available_books_on_stores("atomic-habits")
+    print(stores)
+    print(f"\nTotal stores with book: {len(stores)}")

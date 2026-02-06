@@ -1,44 +1,37 @@
 import streamlit as st
 import math
 import dotenv
-from data.dataset import get_books
+import folium
+import pandas as pd
+from streamlit_folium import st_folium
+from data.dataset import get_books, get_store_locations, get_available_books_on_stores, get_book_categories
 
 dotenv.load_dotenv()
 
-# =============================
-# HELPER GOOGLE MAPS
-# =============================
 def maps_link(address):
     base_url = "https://www.google.com/maps/search/?api=1&query="
     return base_url + address.replace(" ", "+")
 
-# =============================
-# CONFIG
-# =============================
 st.set_page_config(
     page_title="Gramedia Book Collections",
     layout="wide"
 )
 
-ITEMS_PER_PAGE = 4
+ITEMS_PER_PAGE = 20
 
-# =============================
-# SESSION STATE
-# =============================
 if "page" not in st.session_state:
     st.session_state.page = "list"
 
 if "selected_book" not in st.session_state:
     st.session_state.selected_book = None
 
-# =============================
-# LOAD DATA
-# =============================
 books = get_books()
+categories = get_book_categories()
 
-# =============================
-# HALAMAN DETAIL
-# =============================
+# Merge books with categories to get category titles
+books = books.merge(categories[['slug', 'title']], left_on='category_slug', right_on='slug', how='left', suffixes=('', '_category'))
+books = books.rename(columns={'title_category': 'category_title'})
+
 def detail_page(book):
     if st.button("⬅ Kembali"):
         st.session_state.page = "list"
@@ -57,42 +50,79 @@ def detail_page(book):
         st.markdown("---")
         st.title(book["title"])
         st.write(f"✍️ **Penulis:** {book['author']}")
-        st.write(f"🏷️ **Kategori:** {book['category_slug']}")
+        st.write(f"🏷️ **Kategori:** {book.get('category_title', book['category_slug'])}")
         st.write(f"💰 **Harga:** Rp {book['final_price']:,}")
         st.markdown("---")
-        location = books.get("location", "Gramedia Indonesia")
-        maps_url = maps_link(location)
-        st.write("🗺️ Peta Lokasi Toko")
-        st.markdown(
-            f"""
-            <iframe
-                width="100%"
-                height="225"
-                style="border:0"
-                loading="lazy"
-                allowfullscreen
-                src="https://www.google.com/maps?q={location.replace(" ", "+")}&output=embed">
-            </iframe>
-            """,
-            unsafe_allow_html=True
-        )
+        st.write("🗺️ Toko yang Menjual Buku Ini")
+        
+        # Get book slug
+        book_slug = book.get('slug')
+        
+        if book_slug:
+            # Get stores that have this book available
+            available_stores_df = get_available_books_on_stores(book_slug)
+            
+            if not available_stores_df.empty:
+                # Load all store locations to get coordinates
+                all_stores = get_store_locations()
+                
+                # Merge to get coordinates for available stores
+                stores = available_stores_df.merge(
+                    all_stores,
+                    on='name',
+                    how='inner'
+                )
+                
+                if not stores.empty:
+                    # Calculate center point from available stores
+                    avg_lat = stores['latitude'].mean()
+                    avg_lon = stores['longitude'].mean()
+                    
+                    # Create folium map centered on average location of available stores
+                    m = folium.Map(
+                        location=[avg_lat, avg_lon],
+                        zoom_start=5,
+                        tiles="OpenStreetMap"
+                    )
+                    
+                    # Add marker for each store that has the book
+                    for _, store in stores.iterrows():
+                        if pd.notna(store['latitude']) and pd.notna(store['longitude']):
+                            availability = "Offline saja" if store.get('is_only_available_offline') else "Online & Offline"
+                            folium.Marker(
+                                [store['latitude'], store['longitude']],
+                                popup=f"<b>{store['name']}</b><br>{store['address']}<br><i>Ketersediaan: {availability}</i>",
+                                tooltip=f"{store['name']} - {availability}",
+                                icon=folium.Icon(
+                                    color="red" if store.get('is_only_available_offline') else "blue",
+                                    icon="book",
+                                    prefix="fa"
+                                )
+                            ).add_to(m)
+                    
+                    # Display map
+                    st_folium(m, width=700, height=400)
+                    st.caption(f"📍 Buku tersedia di {len(stores)} toko (Merah: Offline saja | Biru: Online & Offline)")
+                else:
+                    st.info("Tidak dapat menemukan koordinat toko yang menjual buku ini.")
+            else:
+                st.warning("Buku ini saat ini tidak tersedia di toko manapun.")
+        else:
+            st.error("Slug buku tidak ditemukan.")
+        
         st.markdown("---")
 
-# =============================
-# HALAMAN LIST
-# =============================
 def list_page():
     st.title("📚 Gramedia Book Collections")
 
-    # ---------- FILTER & SEARCH ----------
     col1, col2, col3 = st.columns(3)
 
     with col1:
         search_query = st.text_input("Cari buku berdasarkan judul")
 
     with col2:
-        categories = ["All"] + sorted(list(books["category_slug"].unique()))
-        selected_category = st.selectbox("Filter kategori", categories)
+        category_options = ["All"] + sorted([cat for cat in books["category_title"].dropna().unique() if cat])
+        selected_category = st.selectbox("Filter kategori", category_options)
 
     with col3:
         sort_option = st.selectbox(
@@ -100,7 +130,6 @@ def list_page():
             ["Judul (A-Z)", "Harga Termurah", "Harga Termahal"]
         )
 
-    # ---------- FILTER LOGIC ----------
     filtered_books = books.copy()
 
     if search_query:
@@ -110,10 +139,9 @@ def list_page():
 
     if selected_category != "All":
         filtered_books = filtered_books[
-            filtered_books["category_slug"] == selected_category
+            filtered_books["category_title"] == selected_category
         ]
 
-    # ---------- SORTING ----------
     if sort_option == "Judul (A-Z)":
         filtered_books = filtered_books.sort_values(by="title")
     elif sort_option == "Harga Termurah":
@@ -121,7 +149,6 @@ def list_page():
     elif sort_option == "Harga Termahal":
         filtered_books = filtered_books.sort_values(by="final_price", ascending=False)
 
-    # ---------- PAGINATION ----------
     total_items = len(filtered_books)
     total_pages = max(1, math.ceil(total_items / ITEMS_PER_PAGE))
 
@@ -136,7 +163,6 @@ def list_page():
     end = start + ITEMS_PER_PAGE
     books_to_show = filtered_books.iloc[start:end]
 
-    # ---------- CARD LIST ----------
     cols = st.columns(4)
 
     for idx, (_, book) in enumerate(books_to_show.iterrows()):
@@ -148,7 +174,7 @@ def list_page():
                 st.caption(book["author"])
 
                 st.markdown(f"**Rp {book['final_price']:,}**")
-                st.caption(f"🏷️ {book['category_slug']}")
+                st.caption(f"🏷️ {book.get('category_title', book['category_slug'])}")
 
                 if st.button("📖 Lihat Detail", key=f"detail_{book['id']}"):
                     st.session_state.selected_book = book
@@ -157,9 +183,6 @@ def list_page():
 
     st.caption(f"Menampilkan halaman {page} dari {total_pages}")
 
-# =============================
-# ROUTER
-# =============================
 if st.session_state.page == "detail" and st.session_state.selected_book is not None:
     detail_page(st.session_state.selected_book)
 else:

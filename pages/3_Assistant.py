@@ -3,7 +3,7 @@ import json
 import os
 import streamlit as st
 from bs4 import BeautifulSoup
-from data.dataset import get_books, get_store_locations
+from data.dataset import get_books, get_store_locations, get_available_books_on_stores
 from data.rag import RAG
 from langchain.agents import create_agent
 from langchain.messages import SystemMessage, HumanMessage, AIMessage
@@ -228,6 +228,56 @@ def get_stores_tool(query: str = None, limit: int = 5) -> str:
     return "\n".join(output)
 
 
+class BookAvailabilityInput(BaseModel):
+    book_query: str = Field(
+        description="The search query for the book to check availability. Can be a title, author, or keyword.",
+    )
+
+
+@tool(
+    "get_book_availability",
+    args_schema=BookAvailabilityInput,
+    description="Check which stores have a specific book available in stock. Use this when user asks where they can buy a specific book, which stores have it, or if a book is available at a certain store. Returns list of stores with the book in stock including store name, city, and availability type.",
+)
+def get_book_availability_tool(book_query: str) -> str:
+    global rag_books
+
+    # First find the book using RAG search
+    results = rag_books.search(book_query, limit=1)
+
+    if results.empty:
+        return "No book found for the given query. Please try a more specific search."
+
+    book = results.iloc[0]
+    book_slug = book.get('slug')
+    book_title = book.get('title')
+
+    if not book_slug:
+        print(f"Book slug not found for book: {book_title}")
+        return f"Book '{book_title}' found but slug is missing."
+
+    try:
+        stores_df = get_available_books_on_stores(book_slug)
+    except Exception as e:
+        print(f"Error fetching availability: {e}")
+        print(e)
+        return f"Gagal mengecek ketersediaan buku '{book_title}'. Coba lagi nanti."
+
+    if stores_df.empty:
+        return f"Buku '{book_title}' saat ini tidak tersedia di toko manapun."
+
+    # Format as compact text
+    output = [f"Ketersediaan buku '{book_title}':"]
+    for _, store in stores_df.iterrows():
+        availability = "Offline saja" if store.get('is_only_available_offline') else "Online & Offline"
+        output.append(
+            f"{len(output)}. {store['name']} - {store['city']}\n"
+            f"   Ketersediaan: {availability}"
+        )
+    
+    output.append(f"\nTotal: {len(stores_df)} toko memiliki buku ini.")
+    return "\n".join(output)
+
 class State(MessagesState):
     pass
 
@@ -260,6 +310,7 @@ Kamu adalah asisten katalog buku Gramedia. Tugasmu membantu pengguna menemukan b
 - Gunakan tool get_books untuk pencarian umum dan menampilkan beberapa pilihan buku
 - Gunakan tool get_book_tool ketika pengguna ingin detail lengkap dari buku tertentu (description, ISBN, format, dll)
 - Gunakan tool filter_books_by_price ketika pengguna menyebut harga (lebih murah dari X, lebih mahal dari Y, atau range harga)
+- Gunakan tool get_book_availability ketika pengguna bertanya di mana bisa beli buku tertentu, toko mana yang punya stok, atau ketersediaan buku
 - Jika hasil kosong, jelaskan bahwa data tidak ditemukan dan tawarkan kata kunci lain
 - Jangan mengarang judul/penulis di luar dataset
 - Jika pengguna meminta rekomendasi, tampilkan beberapa opsi singkat (judul, penulis, kategori, harga bila tersedia)
@@ -281,7 +332,7 @@ Jawaban harus ringkas, ramah, dan berbasis data. Format output dengan rapi mengg
         model=model,
         system_prompt=SystemMessage(content=system_prompt),
         checkpointer=st.session_state.checkpointer,
-        tools=[get_books_tool, get_book_tool, filter_books_by_price_tool, get_stores_tool],
+        tools=[get_books_tool, get_book_tool, filter_books_by_price_tool, get_stores_tool, get_book_availability_tool],
     )
 
 # Thread config for maintaining conversation
