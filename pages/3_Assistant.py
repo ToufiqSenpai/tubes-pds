@@ -53,6 +53,7 @@ def get_books_tool(query: str = None, limit: int = 5) -> str:
     for idx, book in results.iterrows():
         output.append(
             f"{idx+1}. {book['title']} - {book['author']}\n"
+            f"   Gambar: {book.get('image', 'N/A')}\n"
             f"   Harga: Rp {book['final_price']:,} | Diskon: {book.get('discount', 0)}% | Kategori: {book['category_slug']}"
         )
     
@@ -176,6 +177,7 @@ def filter_books_by_price_tool(
     for idx, book in results.iterrows():
         output.append(
             f"{len(output)+1}. {book['title']} - {book['author']}\n"
+            f"   Gambar: {book.get('image', 'N/A')}\n"
             f"   Harga: Rp {book['final_price']:,} | Diskon: {book.get('discount', 0)}% | Kategori: {book['category_slug']}"
         )
     
@@ -304,9 +306,10 @@ Kamu adalah asisten katalog buku Gramedia. Tugasmu membantu pengguna menemukan b
 
 **Format Tampilan Buku:**
 - Ketika menampilkan informasi buku, SELALU sertakan gambar cover buku menggunakan markdown image syntax
-- Data dari tool sudah include field 'image' yang berisi URL gambar
-- Format gambar: ![Judul Buku](URL_gambar)
-- Letakkan gambar di atas atau di samping informasi buku untuk visual yang menarik
+- Data dari tool (get_books, filter_books_by_price, get_book_tool) sudah menyertakan field 'Gambar:' atau 'Image:' yang berisi URL gambar
+- Untuk setiap buku yang ditampilkan, gunakan format: ![Cover Buku](URL_dari_field_Gambar)
+- Letakkan gambar di dalam tabel atau di samping informasi buku agar tampilan rapi dan visual menarik
+- PENTING: Setiap buku HARUS menggunakan URL gambar yang BERBEDA sesuai dengan data dari tool
 
 **Untuk Pencarian Toko:**
 - Gunakan tool get_stores ketika pengguna bertanya tentang lokasi toko, nama toko tertentu, atau alamat toko
