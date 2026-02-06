@@ -59,8 +59,8 @@ def detail_page(book):
             description = get_book_description(book_slug)
             if description:
                 st.markdown("---")
-                st.write("📖 **Deskripsi:**")
-                st.write(description)
+                with st.expander("📖 **Lihat Deskripsi Buku**", expanded=False):
+                    st.write(description)
         
         st.markdown("---")
         st.write("🗺️ Toko yang Menjual Buku Ini")
