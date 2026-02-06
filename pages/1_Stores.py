@@ -115,7 +115,7 @@ with tab3:
 
         folium.Marker(
             [lat, lon],
-            popup=folium.Popup(popup_text, max_width=300)
+            popup=folium.Popup(popup_text, max_width=300),
             icon=folium.Icon(color="blue", icon="info-sign")
         ).add_to(m)
 
