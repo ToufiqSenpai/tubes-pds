@@ -112,7 +112,6 @@ def detail_page(book):
                     
                     # Display map
                     st_folium(m, width=700, height=400)
-                    st.caption(f"📍 Buku tersedia di {len(stores)} toko (Merah: Offline saja | Biru: Online & Offline)")
                 else:
                     st.info("Tidak dapat menemukan koordinat toko yang menjual buku ini.")
             else:
